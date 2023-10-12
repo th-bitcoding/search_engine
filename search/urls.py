@@ -13,7 +13,7 @@ urlpatterns = [
    path('api/search/favourite/', FavouriteApiview.as_view(), name='favourite'),
    path('api/search/random/', RandomSelect.as_view(), name='random'),
    path('api/search/singlecountry/', SingleCountry.as_view(), name='singlecountry'),
-
+   path('api/search/uniquedevice/', UniqueDevice.as_view(), name='uniquedevice'),
    path("api/deffer_sol/", DiffereSol.as_view()),
    # path("api/search_value/", MyModelSearchView.as_view()),
 

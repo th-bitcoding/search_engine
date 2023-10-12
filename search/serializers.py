@@ -20,4 +20,9 @@ class RandomObjectSerializer(serializers.ModelSerializer):
         model = Channel
         fields ='__all__'
 
+class UniqueUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserUnique
+        fields = ['unique_id','flag']
+
 

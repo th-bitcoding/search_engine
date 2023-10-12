@@ -39,7 +39,7 @@ class SearchAfg(models.Model):
     json_file =models.JSONField()
 
 class UserUnique(models.Model):
-    unique_id = models.CharField(max_length=10,unique=True)
+    unique_id = models.CharField(max_length=20, unique=True)
     flag = models.BooleanField()
 
 
