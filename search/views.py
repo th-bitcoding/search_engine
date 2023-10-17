@@ -20,14 +20,11 @@ from difflib import SequenceMatcher
 from rest_framework import status
 from django.core.paginator import Paginator, EmptyPage
 from rest_framework.response import Response
-from spellchecker import SpellChecker
-
 
 class CustomPagination(PageNumberPagination):
     page_size = 10 
     page_size_query_param = 'page_size'
     max_page_size = 1000
-
 
 
 class SearchChannels(APIView):
@@ -36,23 +33,8 @@ class SearchChannels(APIView):
         query_country = request.query_params.get('country_filter', '').lower()
         query_flag = request.query_params.get('hot_filter', '')
         query_favourite = request.query_params.get('favourite').lower()
-        user_unique_id = request.query_params.get('unique_id')
-     
-        conversion_dict = {'': False, None: False, 'false': False, 'true': True}
-        query_flag = conversion_dict.get(query_flag.lower(), query_flag)
-        print('user_id',user_unique_id)
-        country_name_match = []
-        exact_matches = []
-        name_matches = []
-        other_results = []
-        country_name_nomatch = []
-        recent_search = []
-        favourite_list = []
-        unique_recent_search=[]
-        recent_search_terms = Search.objects.values_list('search_data', flat=True)
-
-        recent_search.extend(recent_search_terms)
-        unique_recent_search = list(set(data for data in recent_search if data))
+        user_unique_id = request.query_params.get('unique_id').lower()
+        print('query', query)
         user_flag = None
         if user_unique_id:
             try:
@@ -61,37 +43,65 @@ class SearchChannels(APIView):
                 if not check_user_id.exists():
                     UserUnique.objects.create(unique_id=user_unique_id, flag=query_flag.capitalize())
                     user_flag = query_flag
+
             except Exception as e:
                 print("An error occurred:", str(e))
 
         Channels = check_flag(user_flag)
+
+        country_name_match = []
+        exact_matches = []
+        other_results = []
+        country_name_nomatch = []
+        recent_search = []
+        favourite_list = []
+        unique_recent_search = []
+        recent_search_terms = Search.objects.values_list('search_data', flat=True)
+        query_match = []
+        recent_search.extend(recent_search_terms)
+        unique_recent_search = list(set(data for data in recent_search if data))
+        check_ratio = calculate_matching_ratio(query, Channels)
+
+        spelling_related = []
+        priority_matches = []  # New list for priority matches
+
         for channel in Channels:
             json_data = channel.json_data
             for key, data in json_data.items():
-                if query_favourite == data['name'].lower() or (query_favourite =='' or None):
+                if query_favourite == data['name'].lower() or (query_favourite == '' or None):
                     favourite_list.append(data)
-                
-                if query_country == data['country'].lower() or (query_country =='' or None) or (query_country in data['country'].lower()):
-                    exact_matches.append(data)
-    
-                elif query in data['name'].lower() or query in data['country'].lower() or (query == '' or None):
-                    name_matches.append(data)
 
+                if query_country == data['country'].lower():
+                    exact_matches.append(data)
+                    priority_matches.append(data)  # Add to priority matches
+                elif query_country in data['country'].lower():
+                    exact_matches.append(data)
                 else:
                     other_results.append(data)
 
-        random_queryset =random.sample([data['name'] for data in exact_matches if data.get('name')],5)
+                for i in check_ratio[:10]:
+                    if i[0] == data['name']:
+                        spelling_related.append(data)
 
-        if len(favourite_list) == 0:
-            pass
+        spel = []
+        for spelling in spelling_related:
+            for key, data in spelling.items():
+                if key == 'name':
+                    spel.append(data)
+        detail = spelling_related[0]['name'].split(' ')
 
-        elif favourite_list[0]['name'] in Favourite.objects.values_list('name',flat=True):
+        perfect_word = str(difflib.get_close_matches(query.capitalize(), detail))
+
+        random_selects = random_select(exact_matches)
+
+        if (len(favourite_list) == 0) or favourite_list[0]['name'] in Favourite.objects.values_list('name', flat=True):
             pass
-        
         else:
-            favourite_data = Favourite.objects.create(country = favourite_list[0]['country'],name = favourite_list[0]['name'],stream_video_url=favourite_list[0]['stream_video_url'],thumbnail_url=favourite_list[0]['thumbnail_url']) 
+            favourite_data = Favourite.objects.create(country=favourite_list[0]['country'], name=favourite_list[0]['name'],
+                                                      stream_video_url=favourite_list[0]['stream_video_url'],
+                                                      thumbnail_url=favourite_list[0]['thumbnail_url'])
             favourite_data.save()
-      
+
         if query:
             searching = Search.objects.create(search_data=query)
         else:
@@ -99,15 +109,15 @@ class SearchChannels(APIView):
         searching.save()
 
         for exact_match_data in exact_matches:
-            if query in exact_match_data['name'].lower():
+            if perfect_word[2:len(perfect_word) - 2].lower() in exact_match_data['name'].lower():
                 country_name_match.append(exact_match_data)
             else:
                 country_name_nomatch.append(exact_match_data)
 
-        combined_results = country_name_match + country_name_nomatch + name_matches + other_results
+        combined_results = country_name_match + country_name_nomatch + other_results
 
-        paginator = Paginator(combined_results, per_page=10)  
-        page_number = request.query_params.get('page', 1)  
+        paginator = Paginator(combined_results, per_page=10)
+        page_number = request.query_params.get('page', 1)
 
         try:
             page_number = int(page_number)
@@ -118,16 +128,17 @@ class SearchChannels(APIView):
             result_page = paginator.page(page_number)
         except EmptyPage:
             return Response({'error': 'Invalid page number'}, status=400)
-       
+
         total_count = paginator.count
         response_data = {
             'next_page': None,
             'previous_page': None,
             'current_page': result_page.number,
             'total_pages': paginator.num_pages,
-            'total_data':total_count,
-            'suggestion':random_queryset,
+            'total_data': total_count,
+            'suggestion': random_selects,
             'resent search': unique_recent_search[0:5],
+            'priority_matches': priority_matches,  # Add priority matches to the response
             'results': result_page.object_list,
         }
 
@@ -145,42 +156,143 @@ class SearchChannels(APIView):
     
 class UniqueDevice(APIView):
     def post(self, request, *args, **kwargs):
-        unique_id = request.query_params.get('unique_id', '')  
+        unique_id = request.query_params.get('unique_id', '') 
         flag = request.query_params.get('flag', '') 
-        
-        existing_user = UserUnique.objects.filter(unique_id=unique_id).first()
-        print('898980', existing_user)
-
-        if existing_user:
-            return Response({'message': 'User with this unique_id already exists.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        UserUnique.objects.create(unique_id=unique_id, flag=flag.capitalize())
+        print(unique_id)
        
-        new_user = UserUnique.objects.get(unique_id=unique_id)
-        serializer = UniqueUserSerializer(new_user)
-        
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
-    def put(self, request, *args, **kwargs):
-        unique_id = request.query_params.get('unique_id', '')
-        flag = request.query_params.get('flag', '')
+        serializer = UniqueUserSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(unique_id = unique_id , flag = flag)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        existing_user = UserUnique.objects.filter(unique_id=unique_id).first()
-        
-        if not existing_user:
-            return Response({'message': 'User with this unique_id does not exist.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Update the existing user's flag with the new value
-        existing_user.flag = flag.capitalize()
-        existing_user.save()
+
+
+
+# class SearchChannels(APIView):
+#     def get(self, request):
+#         query = request.query_params.get('search_query', '').lower()
+#         query_country = request.query_params.get('country_filter', '').lower()
+#         query_flag = request.query_params.get('hot_filter', '')
+#         query_favourite = request.query_params.get('favourite').lower()
+#         user_unique_id = request.query_params.get('unique_id').lower()
+#         print('query',query)
+#         user_flag = None
+#         if user_unique_id:
+#             try:
+#                 check_user_id = UserUnique.objects.get(unique_id=user_unique_id)
+#                 user_flag = check_user_id.flag
+#                 if not check_user_id.exists():
+#                     UserUnique.objects.create(unique_id = user_unique_id,flag=query_flag.capitalize())
+#                     user_flag = query_flag
+
+#             except Exception as e:
+#                 print("An error occurred:", str(e))
+
+#         Channels = check_flag(user_flag)
+
+#         country_name_match = []
+#         exact_matches = []
+#         other_results=[]
+#         country_name_nomatch = []
+#         recent_search = []
+#         favourite_list = []
+#         unique_recent_search=[]
+#         recent_search_terms = Search.objects.values_list('search_data', flat=True)
+#         query_match = []
+#         recent_search.extend(recent_search_terms)
+#         unique_recent_search = list(set(data for data in recent_search if data))
+#         check_ratio = calculate_matching_ratio(query,Channels)
        
-        serializer = UniqueUserSerializer(existing_user)
+#         spelling_related=[]
+#         for channel in Channels:
+#             json_data = channel.json_data
+#             for key, data in json_data.items():
+#                 if query_favourite == data['name'].lower() or (query_favourite =='' or None):
+#                     favourite_list.append(data)
+#                 if query_country == data['country'].lower() or (query_country =='' or None) or (query_country in data['country'].lower()):
+#                     exact_matches.append(data)
+                
+                
+#                 else:
+#                     other_results.append(data)
+#                 for i in check_ratio[:10]:
+#                     if i[0] == data['name']:
+#                         spelling_related.append(data)
+#         spel=[]
+#         for spelling in spelling_related:
+#             for key,data in spelling.items():
+#                 if key == 'name':
+#                     spel.append(data)
+#         detail = spelling_related[0]['name'].split(' ')
         
-        return Response(serializer.data, status=status.HTTP_200_OK)
+      
+#         perfect_word = str(difflib.get_close_matches(query.capitalize(), detail))
+      
+#         random_selects = random_select(exact_matches)
+
+#         if (len(favourite_list) == 0) or favourite_list[0]['name'] in Favourite.objects.values_list('name',flat=True):
+#             pass
+#         else:
+#             favourite_data = Favourite.objects.create(country = favourite_list[0]['country'],name = favourite_list[0]['name'],stream_video_url=favourite_list[0]['stream_video_url'],thumbnail_url=favourite_list[0]['thumbnail_url']) 
+#             favourite_data.save()
+
+      
+#         if query:
+#             searching = Search.objects.create(search_data=query)
+#         else:
+#             searching = Search.objects.create(search_data=query_country)
+#         searching.save()
+        
+        
+#         for exact_match_data in exact_matches:
+#             if perfect_word[2:len(perfect_word)-2].lower() in exact_match_data['name'].lower():
+
+#                 country_name_match.append(exact_match_data)
+#             else:
+#                 pass
+#                 country_name_nomatch.append(exact_match_data)
+
+#         combined_results =  country_name_match + country_name_nomatch  + other_results
 
         
+#         paginator = Paginator(combined_results, per_page=10)  
+#         page_number = request.query_params.get('page', 1)  
 
+#         try:
+#             page_number = int(page_number)
+#         except (ValueError, TypeError):
+#             return Response({'error': 'Invalid page number'}, status=400)
 
+#         try:
+#             result_page = paginator.page(page_number)
+#         except EmptyPage:
+#             return Response({'error': 'Invalid page number'}, status=400)
+       
+#         total_count = paginator.count
+#         response_data = {
+#             'next_page': None,
+#             'previous_page': None,
+#             'current_page': result_page.number,
+#             'total_pages': paginator.num_pages,
+#             'total_data':total_count,
+#             'suggestion':random_selects,
+#             'resent search': unique_recent_search[0:5],
+#             'results': result_page.object_list,
+#         }
+
+#         if result_page.has_next():
+#             query_params = request.GET.copy()
+#             query_params['page'] = result_page.next_page_number()
+#             response_data['next_page'] = request.build_absolute_uri(request.path_info) + '?' + query_params.urlencode()
+
+#         if result_page.has_previous():
+#             query_params = request.GET.copy()
+#             query_params['page'] = result_page.previous_page_number()
+#             response_data['previous_page'] = request.build_absolute_uri(request.path_info) + '?' + query_params.urlencode()
+
+#         return Response(response_data)
 
 
 # class SearchChannels(APIView):
