@@ -15,6 +15,6 @@ urlpatterns = [
    path('api/search/singlecountry/', SingleCountry.as_view(), name='singlecountry'),
    path('api/search/uniquedevice/', UniqueDevice.as_view(), name='uniquedevice'),
    path("api/deffer_sol/", DiffereSol.as_view()),
-   # path("api/search_value/", MyModelSearchView.as_view()),
+   
 
 ]
